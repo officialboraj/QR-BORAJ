@@ -1,0 +1,5 @@
+{
+  "name": "QR Boraj Quantum Platform",
+  "description": "An advanced QR code ecosystem with 80+ smart points, analytics, AI-powered design, and multi-user management.",
+  "requestFramePermissions": ["geolocation"]
+}

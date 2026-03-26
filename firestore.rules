@@ -1,0 +1,162 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (Auth UID)
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - displayName: string
+    //   - photoURL: string
+    //   - role: string (required, enum: ['admin', 'user', 'manager'])
+    //   - apiKeys: list (optional)
+    //   - thirdPartyKeys: map (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: qrcodes
+    // Document ID: qrId
+    // Fields:
+    //   - id: string (required)
+    //   - ownerId: string (required)
+    //   - type: string (required)
+    //   - content: string (required)
+    //   - title: string
+    //   - style: map
+    //   - isDynamic: bool
+    //   - redirectUrl: string
+    //   - scanCount: int
+    //   - createdAt: timestamp (required)
+    //   - campaignId: string
+    //
+    // Collection: scans
+    // Document ID: scanId
+    // Fields:
+    //   - qrId: string (required)
+    //   - timestamp: timestamp (required)
+    //   - ip: string
+    //   - device: string
+    //   - os: string
+    //   - browser: string
+    //   - country: string
+    //   - city: string
+    //   - referrer: string
+    //
+    // Collection: campaigns
+    // Document ID: campaignId
+    // Fields:
+    //   - id: string (required)
+    //   - ownerId: string (required)
+    //   - name: string (required)
+    //   - description: string
+    //   - createdAt: timestamp (required)
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "officialboraj@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.ownerId;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidUser(data) {
+      return data.uid is string &&
+             data.email is string &&
+             data.role in ['admin', 'user', 'manager'] &&
+             (!('apiKeys' in data) || data.apiKeys is list) &&
+             (!('thirdPartyKeys' in data) || data.thirdPartyKeys is map) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidQRCode(data) {
+      return data.id is string &&
+             data.ownerId is string &&
+             data.type is string &&
+             data.content is string &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidScan(data) {
+      return data.qrId is string &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidCampaign(data) {
+      return data.id is string &&
+             data.ownerId is string &&
+             data.name is string &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Match Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'user' || isAdmin());
+      allow update: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /qrcodes/{qrId} {
+      // Publicly readable for dynamic redirects and scan tracking
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid && isValidQRCode(request.resource.data);
+      allow update: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin()) && isValidQRCode(request.resource.data);
+      allow delete: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    match /scans/{scanId} {
+      // Publicly writable for tracking scans
+      allow create: if isValidScan(request.resource.data);
+      // Only owner of the QR or admin can read scans
+      allow read: if isAuthenticated() && (get(/databases/$(database)/documents/qrcodes/$(resource.data.qrId)).data.ownerId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid && isValidCampaign(request.resource.data);
+      allow update: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin()) && isValidCampaign(request.resource.data);
+      allow delete: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    match /subscriptions/{subId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /promocodes/{promoId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /otps/{otpId} {
+      allow read, write: if false; // Server-only
+    }
+  }
+}
